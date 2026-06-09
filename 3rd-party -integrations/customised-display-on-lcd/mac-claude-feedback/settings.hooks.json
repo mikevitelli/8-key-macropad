@@ -1,0 +1,8 @@
+{
+  "hooks": {
+    "PreToolUse":       [{ "matcher": "*", "hooks": [{ "type": "command", "command": "python3 ~/eezbot/pad_feedback_hook.py" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "python3 ~/eezbot/pad_feedback_hook.py" }] }],
+    "Stop":             [{ "hooks": [{ "type": "command", "command": "python3 ~/eezbot/pad_feedback_hook.py" }] }],
+    "Notification":     [{ "hooks": [{ "type": "command", "command": "python3 ~/eezbot/pad_feedback_hook.py" }] }]
+  }
+}
