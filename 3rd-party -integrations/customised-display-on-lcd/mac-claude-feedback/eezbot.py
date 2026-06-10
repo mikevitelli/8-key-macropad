@@ -115,8 +115,8 @@ PROFILES = {
         4: {"label": "Scroll Dn", "script": "PAGEDOWN"},     # scroll output down
         5: {"label": "Stop",      "script": "CONTROL c"},    # interrupt a run
         6: {"label": "Menu",      "script": "NEXT_PROFILE"}, # back to the macro profiles
-        7: {"label": "Voice",     "script": "F5"},           # macOS dictation (remap in System Settings if needed)
-        8: {"label": "Relay",     "script": "STRING relay"}, # placeholder - define the real relay action
+        7: {"label": "Voice",     "script": "F5"},           # macOS Dictation key (F5 triggers it once Dictation is enabled)
+        8: {"label": "Complete",  "script": "TAB\nDELAY 80\nENTER"},  # autocomplete (Tab) then run (Enter)
     },
 }
 

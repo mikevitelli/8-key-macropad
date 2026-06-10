@@ -15,6 +15,11 @@ Requires **firmware v35+** (v29 ignores `cus` frames). Python 3 + `pyserial`.
 - `pad_feedback_hook.py` — a Claude Code hook handler. Reads the event JSON on stdin,
   formats a one-line message, and fires a **non-blocking** pad update (detached subprocess,
   always exits 0) so it can never delay or break Claude's tool flow.
+- `cus_tail.py` — **the live mirror that needs no hooks and no restart** (recommended). A
+  daemon that tails the newest transcript `.jsonl` (re-detecting the active session across
+  restarts) and renders the latest message + action to the pad in plain language
+  (clear-then-redraw, drains to the freshest entry). Run it once: `nohup python3 cus_tail.py &`.
+  Use this instead of the hooks if you don't want to restart Claude Code to load them.
 - `settings.hooks.json` — the hooks block to merge into `~/.claude/settings.json`.
 - `eezbot.py` — the serial config tool (defines Profile 5, the AI deck; pushes labels/scripts).
 
