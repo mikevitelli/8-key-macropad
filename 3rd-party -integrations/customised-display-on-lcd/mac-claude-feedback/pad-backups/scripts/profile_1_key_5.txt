@@ -1,0 +1,2 @@
+STRING ssh -t uconsole 'TERM=xterm-256color ~/.local/bin/livemon'
+ENTER

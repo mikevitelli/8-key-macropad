@@ -1,0 +1,2 @@
+STRING ssh pi-top
+ENTER
