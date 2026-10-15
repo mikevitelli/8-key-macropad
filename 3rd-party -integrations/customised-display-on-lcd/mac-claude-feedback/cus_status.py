@@ -10,9 +10,12 @@ Usage: cus_status.py "<message>" ["<status>"] ["#RRGGBB main-bg"]
 import sys
 import json
 import time
+import fcntl
+import os
 
 PORT = "/dev/cu.usbmodem1234561"   # pad 1 = the AI display
 BAUD = 115200
+LOCK = "/tmp/cus_status.lock"      # one writer at a time; see render()
 
 
 def _frame(o: dict) -> bytes:
@@ -21,8 +24,18 @@ def _frame(o: dict) -> bytes:
 
 
 def render(msg: str, status: str = "", color: str = "#1E4FFF") -> None:
+    lock = None
     try:
         import serial
+        # Claude fires this per tool call and tool calls run in parallel, so
+        # several detached copies race for one CDC port. Take an exclusive lock
+        # first; if another render is mid-write, drop this frame rather than
+        # queue (the pad only ever shows the latest state anyway).
+        lock = open(LOCK, "w")
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return
         s = serial.Serial(PORT, BAUD, timeout=0.4, write_timeout=1.0)
         time.sleep(0.05)
         s.write(_frame({
@@ -39,8 +52,20 @@ def render(msg: str, status: str = "", color: str = "#1E4FFF") -> None:
             }))
             s.flush()
         s.close()
-    except Exception:
-        pass  # display is best-effort; never break the caller
+    except Exception as e:
+        # display is best-effort; never break the caller, but leave a trace
+        try:
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "cus_status.log"), "a") as f:
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {type(e).__name__}: {e}\n")
+        except Exception:
+            pass
+    finally:
+        if lock is not None:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+                lock.close()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

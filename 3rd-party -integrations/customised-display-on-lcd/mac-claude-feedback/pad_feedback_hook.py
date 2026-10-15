@@ -13,6 +13,7 @@ import subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RENDER = os.path.join(HERE, "cus_status.py")
+PYTHON = os.path.join(HERE, ".venv", "bin", "python")  # has pyserial; system python3 doesn't
 
 
 def main() -> None:
@@ -56,7 +57,7 @@ def main() -> None:
 
     try:
         subprocess.Popen(
-            ["python3", RENDER, msg, status, color],
+            [PYTHON, RENDER, msg, status, color],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     except Exception:

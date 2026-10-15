@@ -80,14 +80,16 @@ PROFILES = {
     },
     # Profile 2 - Spotify. Transport/volume are consumer-control HID (global, no focus
     # needed); K8 opens Spotify via Spotlight.
+    # Media keys are CONSUMER-control (type 0, flag 2 + 2-byte usage code), NOT scripts.
+    # (Script tokens like PP/PREV worked on v29 but v35 ignores them.)
     2: {
-        1: {"label": "Prev", "script": "PREV"},
-        2: {"label": "Play", "script": "PP"},
-        3: {"label": "Next", "script": "NEXT"},
-        4: {"label": "Stop", "script": "STOP"},
-        5: {"label": "Vol-", "script": "VOLDOWN"},
-        6: {"label": "Vol+", "script": "VOLUP"},
-        7: {"label": "Mute", "script": "MUTE"},
+        1: {"label": "Prev", "consumer": 0x00B6},   # scan previous track
+        2: {"label": "Play", "consumer": 0x00CD},   # play/pause
+        3: {"label": "Next", "consumer": 0x00B5},   # scan next track
+        4: {"label": "Stop", "consumer": 0x00B7},   # stop
+        5: {"label": "Vol-", "consumer": 0x00EA},   # volume decrement
+        6: {"label": "Vol+", "consumer": 0x00E9},   # volume increment
+        7: {"label": "Mute", "consumer": 0x00E2},   # mute
         8: {"label": "Spotify", "script": open_app("Spotify")},
     },
     # Profile 3 - Adobe Lightroom Classic. The finger-twister chords + a macro, the stuff
@@ -104,6 +106,23 @@ PROFILES = {
         7: {"label": "Export", "script": "COMMAND SHIFT e"},   # export dialog
         # Keeper macro: 3-star rating + green color label in one press
         8: {"label": "Keeper", "script": "STRING 3\nDELAY 80\nSTRING 8"},
+    },
+    # Profile 4 - Plasticity (hard-surface 3D CAD). Plasticity must be the focused app.
+    # Philosophy (same as the Lightroom profile): the single-letter tools are trivial on the
+    # keyboard (Move=G, Rotate=R, Scale=S, Extrude=E, Boolean=Q, Fillet/Chamfer=B), so the pad
+    # carries the annoying chords + forgettable ops instead. Defaults verified against the
+    # Plasticity manual (doc.plasticity.xyz, stable across 1.x/2024.x/2026.x).
+    # NOTE: Redo uses COMMAND (Mac undo/redo convention). If Plasticity on your Mac wants
+    # CONTROL instead, change "COMMAND SHIFT z" -> "CONTROL SHIFT z" and re-push.
+    4: {
+        1: {"label": "Mirror",    "script": "ALT x"},          # Alt+X  mirror selection
+        2: {"label": "Duplicate", "script": "SHIFT d"},        # Shift+D  duplicate
+        3: {"label": "Repeat",    "script": "SHIFT r"},        # Shift+R  repeat last command
+        4: {"label": "Redo",      "script": "COMMAND SHIFT z"},# Cmd+Shift+Z  redo (undo=Cmd+Z is muscle memory)
+        5: {"label": "Isolate",   "script": "STRING ."},       # .  isolate/drill into selection
+        6: {"label": "Hide Oth",  "script": "SHIFT h"},        # Shift+H  hide unselected
+        7: {"label": "Unhide",    "script": "ALT h"},          # Alt+H  unhide all
+        8: {"label": "Delete",    "script": "SHIFT x"},        # Shift+X  delete object (not Backspace=dissolve)
     },
     # Profile 5 - "AI" control deck for the customised (cus / AI-feedback) screen.
     # The customised screen shows whichever profile is ACTIVE (cus can't set the key strip),
@@ -136,6 +155,15 @@ def frame(command: bytes) -> bytes:
 def f_keyboard_empty(prof: int, key: int) -> bytes:
     # type 0, flag 0, empty payload  ->  placeholder so the script takes over
     return frame(f"0{prof}.{key}:0".encode("latin-1"))
+
+
+def f_keyboard_consumer(prof: int, key: int, code: int) -> bytes:
+    # type 0, flag 2 (consumer), + 2-byte big-endian consumer-control usage code.
+    # This is how media keys (play/next/prev/stop/vol/mute) must be sent.
+    return frame(
+        f"0{prof}.{key}:2".encode("latin-1")
+        + bytes([(code >> 8) & 0xFF, code & 0xFF])
+    )
 
 
 def f_alias(prof: int, key: int, label: str) -> bytes:
@@ -186,13 +214,24 @@ def drain(ser, wait: float = 0.4) -> str:
         return repr(out)
 
 
-def push_key(ser, prof: int, key: int, label: str, script: str, verbose=True):
+def push_key(ser, prof: int, key: int, entry: dict, verbose=True):
+    label = entry.get("label", "")
+    # Consumer/media keys: type-0 config with flag 2 + usage code, NO script.
+    if "consumer" in entry:
+        if verbose:
+            print(f"  P{prof} K{key}  {label!r:14}  consumer 0x{entry['consumer']:04X}")
+        send(ser, f_keyboard_consumer(prof, key, entry["consumer"]))  # type 0, flag 2
+        send(ser, f_alias(prof, key, label) if label else f_alias_clear(prof, key))  # type 2/3
+        send(ser, f_script_clear(prof, key))  # type 7 - drop any stale script
+        send(ser, f_enable_hid(prof, key))  # type a
+        return
+    # Normal keys: empty type-0 placeholder + a ducky script (type 6).
+    script = entry["script"]
     if verbose:
         print(
             f"  P{prof} K{key}  {label!r:14}  {script.splitlines()[0]!r}"
             + ("  ..." if "\n" in script else "")
         )
-    # mirror the exact order the vendor web app uses on Save:
     send(ser, f_keyboard_empty(prof, key))  # type 0 (empty placeholder)
     if label:
         send(ser, f_alias(prof, key, label))  # type 2
@@ -217,7 +256,7 @@ def cmd_push(args):
                 if args.key and k != args.key:
                     continue
                 e = PROFILES[p][k]
-                push_key(ser, p, k, e["label"], e["script"])
+                push_key(ser, p, k, e)
         print("done.")
 
 
@@ -235,6 +274,39 @@ def cmd_query(args):
                 print(f"P{p} K{k} ->", repr(drain(ser, 0.5)))
 
 
+def cmd_sync(args):
+    """Push ALL profiles to EVERY connected pad. Both pads share USB serial 1234561,
+    so we loop over every /dev/cu.usbmodem* port to hit both regardless of which is which.
+    Pauses the live-chat daemon (it owns a serial port) and restarts it after."""
+    import glob
+    import subprocess
+    ports = sorted(glob.glob("/dev/cu.usbmodem*"))
+    if not ports:
+        print("no pads connected (/dev/cu.usbmodem* not found)")
+        return
+    daemon = os.path.expanduser("~/eezbot/cus_tail.py")
+    was_running = subprocess.run(["pgrep", "-f", "cus_tail.py"],
+                                 stdout=subprocess.DEVNULL).returncode == 0
+    if was_running:
+        subprocess.run(["pkill", "-f", "cus_tail.py"], stderr=subprocess.DEVNULL)
+        time.sleep(1)
+    try:
+        for port in ports:
+            print(f"=== sync {port} ===")
+            with serial.Serial(port, BAUD, timeout=0.3) as ser:
+                time.sleep(0.3)
+                for p in sorted(PROFILES):
+                    for k in sorted(PROFILES[p]):
+                        push_key(ser, p, k, PROFILES[p][k])
+    finally:
+        if was_running and os.path.exists(daemon):
+            log = open("/tmp/cus_tail.log", "ab")
+            subprocess.Popen(["python3", daemon], stdout=log, stderr=log,
+                             start_new_session=True)
+            print("live-chat daemon restarted")
+    print(f"synced {len(ports)} pad(s): {', '.join(ports)}")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Configure EezBotFun MacroPad over serial")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -246,6 +318,8 @@ def main():
     pq.add_argument("--profile", type=int)
     pq.add_argument("--key", type=int)
     pq.set_defaults(func=cmd_query)
+    ps = sub.add_parser("sync", help="push all profiles to ALL connected pads (keeps both in sync)")
+    ps.set_defaults(func=cmd_sync)
     args = ap.parse_args()
     args.func(args)
 
